@@ -1,198 +1,310 @@
-<<<<<<< HEAD
-# micropp — Pipeline Parallelism from Scratch
+# Pipeline Parallelism from Scratch
 
-A beginner-friendly implementation of pipeline parallelism in PyTorch.
+A hands-on PyTorch project that implements pipeline parallel training from the ground up.
 
-No fancy frameworks. No abstractions you have to dig through. Just plain Python you can read top to bottom.
+No DeepSpeed. No Megatron. No heavy abstractions.
 
----
-
-## What is pipeline parallelism?
-
-Normally, a neural network lives on one GPU. But what if the model is too big to fit?
-
-**Pipeline parallelism** splits the model across multiple GPUs like an assembly line:
-
-```
-GPU 0  →  layers  1-4   →  sends activations →
-GPU 1  →  layers  5-8   →  sends activations →
-GPU 2  →  layers  9-12  →  sends activations →
-GPU 3  →  layers 13-16  →  computes loss
-```
-
-Each GPU only owns a *slice* of the model. They pass data to each other to complete the full forward and backward pass.
+Just plain PyTorch code to understand how large models are actually split across workers and trained in practice. 
 
 ---
 
-## Project structure
+## Why this project?
 
+When a model becomes too large to fit on a single GPU, one solution is **pipeline parallelism**.
+
+Instead of placing the whole network on one device, the model is divided into stages and distributed across multiple workers.
+
+Each worker owns only a portion of the layers and passes tensors to the next stage.
+
+```text
+GPU 0 → layers 1–4   → sends activations →
+GPU 1 → layers 5–8   → sends activations →
+GPU 2 → layers 9–12  → sends activations →
+GPU 3 → layers 13–16 → computes loss
 ```
+
+During backpropagation, gradients flow in the opposite direction.
+
+This project recreates that full training flow manually using `torch.distributed`.
+
+---
+
+## What’s inside
+
+```text
 micropp/
 ├── src/
-│   ├── comms.py      ← How GPUs send data to each other
-│   ├── model.py      ← The neural network, split into slices
-│   ├── schedule.py   ← Three different training schedules
-│   ├── main.py       ← Training loop (start here!)
-│   ├── monolith.py   ← Same model on one GPU (for comparison)
-│   └── ping_pong.py  ← Quick test: can the GPUs talk?
+│   ├── comms.py       # Distributed communication helpers
+│   ├── model.py       # Sharded model definition
+│   ├── schedule.py    # Naive / GPipe / 1F1B schedules
+│   ├── main.py        # Main distributed training entry point
+│   ├── monolith.py    # Single-process baseline
+│   ├── ping_pong.py   # Communication sanity check
+│   └── tracker.py     # Optional dashboard logging
 ├── pyproject.toml
 └── README.md
 ```
 
-Read the files in this order: `comms.py` → `model.py` → `schedule.py` → `main.py`
+Recommended reading order:
+
+```text
+comms.py → model.py → schedule.py → main.py
+```
 
 ---
 
 ## Quick start
 
-**No GPU? No problem.** Everything runs on CPU too (just slower).
-
-### Step 1 — Install
+### 1. Install PyTorch
 
 ```bash
 pip install torch
 ```
 
-### Step 2 — Verify communication works
+---
+
+### 2. Test communication
 
 ```bash
 torchrun --nproc-per-node=2 src/ping_pong.py
 ```
 
-You should see:
-```
+Expected output:
+
+```text
 [Rank 0] Sending: [1.0, 2.0, 3.0]
 [Rank 1] Received: [1.0, 2.0, 3.0]
 Communication works!
 ```
 
-### Step 3 — Run the single-GPU baseline
+---
+
+### 3. Run single-process baseline
 
 ```bash
 python src/monolith.py
 ```
 
-This trains the full model on one process. Note the final loss — we'll compare it to the distributed version.
+This trains the same model normally on one process.
 
-### Step 4 — Run pipeline parallelism
+Use it to compare final loss with the distributed version.
+
+---
+
+### 4. Run pipeline parallel training
 
 ```bash
 torchrun --nproc-per-node=4 src/main.py
 ```
 
-This spawns 4 processes, each taking one slice of the model. The final loss should be similar to the monolith — proof that the distributed version is mathematically equivalent.
+This launches four workers, each owning one slice of the model.
+
+If everything is working correctly, the final loss should be close to the monolithic baseline.
 
 ---
 
-## The three schedules
+## Core concepts implemented
 
-Open `src/schedule.py` to see all three. You can swap them in `main.py` by changing the import.
+## 1. Model Sharding
 
-### Schedule 1 — Naive (simplest)
+The full MLP is split across workers.
+
+Example with 16 layers and 4 workers:
+
+| Rank | Layers                    |
+| ---- | ------------------------- |
+| 0    | 1–4                       |
+| 1    | 5–8                       |
+| 2    | 9–12                      |
+| 3    | 13–16 + classifier + loss |
+
+Only:
+
+* Rank 0 receives raw input
+* Final rank receives labels
+* Final rank computes loss
+
+---
+
+## 2. Communication Between Workers
+
+Built directly using `torch.distributed`.
+
+### Forward pass
+
+* `send_forward()` → send activations to next rank
+* `recv_forward()` → receive activations from previous rank
+* `isend_forward()` → async non-blocking send
+
+### Backward pass
+
+* `send_backward()` → send gradients to previous rank
+* `recv_backward()` → receive gradients from next rank
+
+---
+
+## 3. Pipeline Schedules
+
+The project includes three scheduling strategies.
+
+---
+
+### Naive Pipeline
+
+Forward the full batch first, then backward.
+
+```text
+F1 → B1
+```
+
+Simple to understand, but inefficient because many workers stay idle.
+
+---
+
+### GPipe
+
+Split the batch into microbatches.
+
+Run all forward passes first, then all backward passes.
+
+```text
+F1 F2 F3 F4 B1 B2 B3 B4
+```
+
+Better hardware utilization than naive scheduling.
+
+---
+
+### 1F1B (One Forward One Backward)
+
+Most efficient schedule in this project.
+
+After warmup, each worker alternates:
+
+```text
+1 forward
+1 backward
+1 forward
+1 backward
+```
+
+This reduces pipeline bubbles and activation memory usage.
+
+Used in real production systems.
+
+---
+
+## Microbatching
+
+Example configuration:
 
 ```python
-from schedule import naive_pipeline_step
+BATCH_SIZE = 32
+CHUNKS = 4
 ```
 
-One micro-batch, one step at a time. Easy to understand, but most GPUs sit idle most of the time.
+The batch becomes:
 
-```
-GPU 0: [==FWD==]·········[==BWD==]
-GPU 1:          [==FWD==][==BWD==]
-GPU 2:                   [FWD][BWD]
-GPU 3:                       [F][B]
-         ↑ lots of idle time (the "bubble")
+```text
+4 microbatches of size 8
 ```
 
-### Schedule 2 — GPipe (micro-batching)
+Different workers can process different chunks simultaneously.
 
-```python
-from schedule import gpipe_pipeline_step
+---
+
+## Why this project matters
+
+Most people know how to call a training framework.
+
+Far fewer understand what happens underneath:
+
+* how pipeline stages communicate
+* why bubbles reduce utilization
+* why 1F1B is faster at scale
+* how gradients move across workers
+* why barriers are needed
+* why async communication is tricky
+* how to validate correctness
+
+This project focuses on those fundamentals.
+
+---
+
+## Validation
+
+A separate `monolith.py` script trains the same model without distribution.
+
+The goal is simple:
+
+```text
+Pipeline loss ≈ Monolith loss
 ```
 
-Split the batch into smaller pieces (chunks). Run all forwards, then all backwards. Smaller bubble.
+That confirms the distributed version is mathematically correct.
 
-```
-GPU 0: [F0][F1][F2][F3]────────[B0][B1][B2][B3]
-GPU 1:      [F0][F1][F2][F3][B0][B1][B2][B3]
-GPU 2:           [F0][F1][F2][F3][B0][B1][B2][B3]
-GPU 3:                [F0][F1][F2][F3][B0][B1][B2][B3]
-```
+---
 
-### Schedule 3 — 1F1B (most efficient)
+## Real-world observation
 
-```python
-from schedule import onef_oneb_pipeline_step  # already selected in main.py
-```
+On a local CPU + Gloo + small model setup, naive scheduling may sometimes appear faster than GPipe or 1F1B.
 
-After a warmup phase, each GPU does one forward then one backward — alternating. Very little idle time, and memory-efficient because activations don't pile up.
+That happens because communication overhead dominates compute.
 
-```
-Warmup → Steady (1F1B) → Cooldown
-GPU 0: [F0][F1][F2][F3]────[B0][B1][B2][B3]
-GPU 1:      [F0][F1][B0][F2][B1][F3][B2][B3]
-GPU 2:           [F0][B0][F1][B1][F2][B2][F3][B3]  ← almost no bubble
-GPU 3:                [F0][B0][F1][B1][F2][B2][F3][B3]
+In real multi-GPU training with large models:
+
+```text
+1F1B > GPipe > Naive
 ```
 
 ---
 
-## Key concepts explained
+## Common issues
 
-### What is a "rank"?
-
-When you run `torchrun --nproc-per-node=4`, it launches 4 copies of your script. Each copy is called a **process**, and each gets a unique ID called its **rank** (0, 1, 2, or 3).
-
-```python
-rank = int(os.environ["RANK"])   # which worker am I?
-```
-
-### Why does only Rank 0 have the data?
-
-In a real pipeline, data enters at one end and flows through to the other. Rank 0 is the "input stage" — it receives the batch from the dataloader and passes activations forward.
-
-### What is `requires_grad = True`?
-
-When a tensor crosses a process boundary via `recv_forward()`, PyTorch doesn't know it's part of a computation graph. Setting `requires_grad = True` tells the autograd engine: "treat this as an input that needs gradients." Without it, gradients won't flow back through this GPU's layers.
-
-### What is `.detach()` when sending?
-
-`send_forward(output.detach())` cuts the computation graph at the boundary. The *next* GPU builds its own fresh graph from the received tensor. This is intentional — each GPU is responsible for its own backward pass.
-
-### What is a "micro-batch"?
-
-In GPipe and 1F1B, we split the batch (e.g. 32 samples) into smaller chunks (e.g. 4 × 8 samples). This lets multiple GPUs work simultaneously on different chunks. Smaller chunks = less memory per GPU = more pipeline overlap.
+| Problem         | Likely Cause                          |
+| --------------- | ------------------------------------- |
+| Script hangs    | One worker waiting on recv            |
+| `RANK` missing  | Script not launched with `torchrun`   |
+| Device mismatch | Model and tensors on different device |
+| Wrong loss      | Gradient scaling / chunk logic issue  |
 
 ---
 
-## Experiment ideas
+## What I learned building this
 
-1. **Compare schedules**: change the import in `main.py` and re-run. Which converges faster? Which is more stable?
-
-2. **Change number of chunks**: try `CHUNKS = 1` (same as naive), `CHUNKS = 4`, `CHUNKS = 8`. How does loss curve change?
-
-3. **Vary model depth**: change `TOTAL_LAYERS`. What happens when it's not evenly divisible by the number of GPUs?
-
-4. **Add timing**: wrap the training loop with `time.time()` per step and print it. Which schedule is fastest per step?
-
----
-
-## Common errors
-
-| Error | Cause | Fix |
-|---|---|---|
-| `KeyError: 'RANK'` | Not launched with `torchrun` | Use `torchrun --nproc-per-node=N src/main.py` |
-| Hangs forever | One rank is waiting to recv but nothing is sending | All ranks must call the schedule function — no `if rank == 0` guards around it |
-| `RuntimeError: Expected all tensors on same device` | Data and model on different devices | Ensure you `.to(device)` both data and model |
-| Loss diverges compared to monolith | Gradient scaling off | Make sure you divide loss by `chunks` in GPipe/1F1B |
+* PyTorch distributed internals
+* Pipeline parallelism mechanics
+* Model sharding
+* Async communication
+* Synchronization barriers
+* Debugging distributed deadlocks
+* Throughput vs overhead tradeoffs
+* Why large-scale training systems are hard
 
 ---
 
-## Further reading
+## Future improvements
 
-- [GPipe paper](https://arxiv.org/abs/1811.06965) — the micro-batching idea
-- [PipeDream paper](https://arxiv.org/abs/1806.03377) — the 1F1B schedule
-- [PyTorch distributed docs](https://pytorch.org/docs/stable/distributed.html)
-=======
-# PipeLine-Parallelism
->>>>>>> c8c32544d8335c6b0e8c88dcadd76e6598f442fe
+* NCCL backend support
+* Multi-GPU benchmarking
+* Mixed precision training
+* Activation checkpointing
+* Uneven layer partitioning
+* Tensor parallel integration
+* Better dashboard visualizations
+
+---
+
+## References
+
+* GPipe paper
+* PipeDream paper
+* PyTorch Distributed Docs
+
+---
+
+## Final Note
+
+This project was built to understand distributed training deeply rather than hide behind frameworks.
+
+If you want to learn how large models are *actually* trained, this is a good place to start.
