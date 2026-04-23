@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>micropp — Pipeline Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+    background: #0f1117;
+    color: #c9d1d9;
+    padding: 24px;
+    min-height: 100vh;
+  }
+
+  h1 { font-size: 18px; font-weight: 600; color: #e6edf3; margin-bottom: 4px; }
+  .subtitle { font-size: 12px; color: #7d8590; margin-bottom: 24px; }
+
+  .grid   { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .full   { grid-column: 1 / -1; }
+
+  .card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .card-title {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: #7d8590; margin-bottom: 12px;
+  }
+
+  /* Status */
+  .status { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #30363d; }
+  .dot.connected { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
+  .dot.training  { background: #58a6ff; animation: pulse 1s infinite; }
+  .dot.done      { background: #3fb950; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  /* Stats */
+  .stat { text-align: center; }
+  .stat-value { font-size: 28px; font-weight: 700; color: #e6edf3; line-height: 1; }
+  .stat-label { font-size: 11px; color: #7d8590; margin-top: 4px; }
+
+  /* Loss chart */
+  #loss-canvas { width: 100%; height: 180px; display: block; }
+
+  /* Config */
+  .cfg-row { display: flex; justify-content: space-between; padding: 4px 0;
+             border-bottom: 1px solid #21262d; font-size: 12px; }
+  .cfg-row:last-child { border-bottom: none; }
+  .cfg-key   { color: #7d8590; }
+  .cfg-value { color: #e6edf3; font-weight: 600; }
+
+  /* ── GANTT ── */
+  .gantt-row   { display: flex; align-items: center; height: 38px; margin-bottom: 5px; }
+  .gantt-label { font-size: 11px; color: #7d8590; width: 72px; flex-shrink:0;
+                 text-align: right; padding-right: 10px; }
+  .gantt-track { position: relative; flex: 1; height: 30px;
+                 background: #0d1117; border-radius: 4px; overflow: hidden; }
+
+  .gantt-block {
+    position: absolute; top: 3px; height: 24px;
+    border-radius: 3px; display: flex; align-items: center;
+    justify-content: center; font-size: 10px; font-weight: 700;
+    overflow: hidden; white-space: nowrap; cursor: default;
+    border: 1px solid transparent;
+  }
+
+  /* Forward — blue family (F1-F4) */
+  .gb-F1 { background:#1c3a5e; color:#79c0ff; border-color:#388bfd44; }
+  .gb-F2 { background:#1a3a5a; color:#58a6ff; border-color:#388bfd44; }
+  .gb-F3 { background:#163354; color:#388bfd; border-color:#388bfd44; }
+  .gb-F4 { background:#122d4e; color:#1f6feb; border-color:#388bfd44; }
+
+  /* Backward — amber family (B1-B4) */
+  .gb-B1 { background:#3d2200; color:#ffa657; border-color:#e3b34144; }
+  .gb-B2 { background:#3a1f00; color:#f0883e; border-color:#e3b34144; }
+  .gb-B3 { background:#361c00; color:#e3b341; border-color:#e3b34144; }
+  .gb-B4 { background:#321900; color:#d4a017; border-color:#e3b34144; }
+
+  .gb-step { background:#1b2e1b; color:#3fb950; border-color:#3fb95044; }
+  .gb-done { background:#1b3124; color:#56d364; border-color:#56d36444; }
+
+  /* Axis */
+  .gantt-axis { display:flex; margin-left:72px; margin-bottom:4px;
+                position:relative; height:16px; }
+  .gantt-tick { position:absolute; font-size:9px; color:#484f58;
+                transform:translateX(-50%); }
+
+  /* Legend */
+  .legend { display:flex; gap:12px; flex-wrap:wrap; margin-top:10px; }
+  .legend-item { display:flex; align-items:center; gap:4px; font-size:10px; color:#7d8590; }
+  .legend-box  { width:14px; height:14px; border-radius:3px; }
+
+  /* Timing */
+  #timing-canvas { width:100%; height:100px; display:block; }
+
+  /* Header */
+  .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; }
+  .header-right { display:flex; align-items:center; gap:12px; }
+
+  /* Buttons */
+  .btn { background:#21262d; border:1px solid #30363d; color:#c9d1d9;
+         padding:6px 14px; border-radius:6px; cursor:pointer;
+         font-size:12px; font-family:inherit; transition:background 0.15s; }
+  .btn:hover { background:#30363d; }
+
+  .window-btns { display:flex; gap:6px; align-items:center; }
+  .wbtn { background:#21262d; border:1px solid #30363d; color:#7d8590;
+          padding:3px 10px; border-radius:4px; cursor:pointer; font-size:11px;
+          font-family:inherit; }
+  .wbtn.active { background:#1f4e8c; border-color:#388bfd; color:#79c0ff; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>micropp / pipeline dashboard</h1>
+    <div class="subtitle">Gantt timeline — exact block durations from start/end events</div>
+  </div>
+  <div class="header-right">
+    <div class="status">
+      <div class="dot" id="status-dot"></div>
+      <span id="status-text" style="font-size:12px;color:#7d8590">waiting...</span>
+    </div>
+    <button class="btn" onclick="resetDashboard()">reset</button>
+  </div>
+</div>
+
+<!-- Stats -->
+<div class="grid-3" style="margin-bottom:16px">
+  <div class="card stat"><div class="stat-value" id="stat-step">—</div><div class="stat-label">current step</div></div>
+  <div class="card stat"><div class="stat-value" id="stat-loss">—</div><div class="stat-label">latest loss</div></div>
+  <div class="card stat"><div class="stat-value" id="stat-schedule">—</div><div class="stat-label">schedule</div></div>
+</div>
+
+<!-- Loss + Config -->
+<div class="grid">
+  <div class="card">
+    <div class="card-title">loss over time</div>
+    <canvas id="loss-canvas"></canvas>
+  </div>
+  <div class="card">
+    <div class="card-title">training config</div>
+    <div id="config-table"></div>
+  </div>
+</div>
+
+<!-- Gantt -->
+<div class="card full" style="margin-bottom:16px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+    <div class="card-title" style="margin-bottom:0">pipeline timeline — staircase (exact durations)</div>
+    <div class="window-btns">
+      <span style="font-size:10px;color:#484f58;margin-right:4px;">show last</span>
+      <button class="wbtn active" onclick="setWindow(1,this)">1 step</button>
+      <button class="wbtn" onclick="setWindow(3,this)">3 steps</button>
+      <button class="wbtn" onclick="setWindow(10,this)">10 steps</button>
+      <button class="wbtn" onclick="setWindow(0,this)">all</button>
+    </div>
+  </div>
+  <div id="gantt-axis" class="gantt-axis"></div>
+  <div id="gantt-wrap">
+    <div style="color:#7d8590;font-size:12px;padding:8px 0">Waiting for training to start...</div>
+  </div>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-box gb-F1"></div> F1 (chunk 1)</div>
+    <div class="legend-item"><div class="legend-box gb-F2"></div> F2 (chunk 2)</div>
+    <div class="legend-item"><div class="legend-box gb-F3"></div> F3 (chunk 3)</div>
+    <div class="legend-item"><div class="legend-box gb-F4"></div> F4 (chunk 4)</div>
+    <div class="legend-item"><div class="legend-box gb-B1"></div> B1 (chunk 1)</div>
+    <div class="legend-item"><div class="legend-box gb-B2"></div> B2 (chunk 2)</div>
+    <div class="legend-item"><div class="legend-box gb-B3"></div> B3 (chunk 3)</div>
+    <div class="legend-item"><div class="legend-box gb-B4"></div> B4 (chunk 4)</div>
+  </div>
+</div>
+
+<!-- Timing -->
+<div class="card full">
+  <div class="card-title">step duration (ms) — all workers</div>
+  <canvas id="timing-canvas"></canvas>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+// rawEvents[rank] = [{phase, step, ts}, ...]
+// phases are like "F1_start", "F1_end", "B2_start", "B2_end", "step", "done"
+const rawEvents   = {};
+const timings     = [];
+const lossHistory = [];
+let   config      = {};
+let   lastStep    = 0;
+let   windowSteps = 1;
+
+// ── SSE ────────────────────────────────────────────────────────────────────
+const es = new EventSource('/stream');
+es.onopen = () => setStatus('connected', '#58a6ff');
+
+es.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+  if (msg.type === 'connected') { loadSnapshot(); return; }
+  if (msg.type === 'heartbeat') return;
+  if (msg.type === 'reset') {
+    Object.keys(rawEvents).forEach(k => delete rawEvents[k]);
+    timings.length = 0; lossHistory.length = 0; config = {}; lastStep = 0;
+    render(); return;
+  }
+  if (msg.type === 'config') {
+    config = msg.data; renderConfig();
+    document.getElementById('stat-schedule').textContent =
+      (config.schedule||'—').replace('_pipeline_step','');
+    setStatus('training','#58a6ff',true); return;
+  }
+  if (msg.type === 'event') {
+    const d = msg.data, r = String(d.rank);
+    if (!rawEvents[r]) rawEvents[r] = [];
+    rawEvents[r].push({ phase: d.phase, step: d.step, ts: d.timestamp });
+    if (d.loss != null) {
+      lossHistory.push({ step: d.step, loss: d.loss });
+      document.getElementById('stat-loss').textContent = d.loss.toFixed(4);
+    }
+    lastStep = Math.max(lastStep, d.step);
+    document.getElementById('stat-step').textContent = lastStep;
+    if (d.phase === 'done') setStatus('done','#3fb950',false);
+    renderGantt(); renderLoss(); return;
+  }
+  if (msg.type === 'timing') { timings.push(msg.data); renderTiming(); }
+};
+
+async function loadSnapshot() {
+  const snap = await (await fetch('/snapshot')).json();
+  if (snap.config?.schedule) {
+    config = snap.config; renderConfig();
+    document.getElementById('stat-schedule').textContent =
+      (config.schedule||'—').replace('_pipeline_step','');
+  }
+  for (const [rank, phases] of Object.entries(snap.rank_phases||{})) {
+    rawEvents[rank] = phases.map(p => ({ phase:p.phase, step:p.step, ts:p.ts }));
+  }
+  for (const l of (snap.loss_history||[])) lossHistory.push(l);
+  if (lossHistory.length) {
+    document.getElementById('stat-loss').textContent =
+      lossHistory[lossHistory.length-1].loss.toFixed(4);
+  }
+  for (const t of (snap.step_times||[])) timings.push(t);
+  lastStep = snap.last_step||0;
+  document.getElementById('stat-step').textContent = lastStep;
+  if (snap.finished) setStatus('done','#3fb950',false);
+  else if (snap.event_count>0) setStatus('training','#58a6ff',true);
+  render();
+}
+
+function render() { renderConfig(); renderGantt(); renderLoss(); renderTiming(); }
+
+// ── Config ─────────────────────────────────────────────────────────────────
+function renderConfig() {
+  if (!config.schedule) return;
+  const rows = [
+    ['schedule', (config.schedule||'—').replace('_pipeline_step','')],
+    ['workers',  config.world_size||'—'],
+    ['chunks',   config.chunks||'—'],
+    ['total steps', config.total_steps||'—'],
+    ['hidden dim',  config.hidden_dim||'—'],
+    ['total layers',config.total_layers||'—'],
+  ];
+  document.getElementById('config-table').innerHTML = rows.map(([k,v]) =>
+    `<div class="cfg-row"><span class="cfg-key">${k}</span><span class="cfg-value">${v}</span></div>`
+  ).join('');
+}
+
+// ── Window selector ────────────────────────────────────────────────────────
+function setWindow(n, btn) {
+  windowSteps = n;
+  document.querySelectorAll('.wbtn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderGantt();
+}
+
+// ── GANTT ──────────────────────────────────────────────────────────────────
+/*
+  schedule.py now sends TWO events per block:
+    { phase: "F1_start", ts: T1 }
+    { phase: "F1_end",   ts: T2 }
+
+  We pair them here to get exact block width = T2 - T1.
+  No estimation needed. Gaps between blocks are real idle/wait time.
+
+  This gives a perfect staircase because:
+  - Worker 0 starts F1 at t=0, ends at t=SLEEP, sends immediately
+  - Worker 1 recv_forward blocks until t=SLEEP, then starts F1_start at ~SLEEP
+  - Worker 2 starts at ~2*SLEEP, etc.
+  - Result: F1 blocks are staggered by exactly SLEEP across workers
+*/
+function buildSegments(evts, globalMaxT) {
+  const pending = {};
+  const segs    = [];
+  for (const e of evts) {
+    if (e.phase.endsWith('_start')) {
+      const label = e.phase.slice(0, -6);
+      pending[label] = { ts: e.ts, step: e.step };
+    } else if (e.phase.endsWith('_end')) {
+      const label = e.phase.slice(0, -4);
+      if (pending[label]) {
+        segs.push({ label, step: pending[label].step,
+                    tStart: pending[label].ts, tEnd: e.ts, partial: false });
+        delete pending[label];
+      }
+    } else if (e.phase === 'step' || e.phase === 'done') {
+      segs.push({ label: e.phase, step: e.step,
+                  tStart: e.ts, tEnd: e.ts + 0.05, partial: false });
+    }
+  }
+  // Render in-progress blocks (started but _end not received yet)
+  for (const [label, p] of Object.entries(pending))
+    segs.push({ label, step: p.step, tStart: p.ts, tEnd: globalMaxT, partial: true });
+  return segs;
+}
+
+function globalMaxTimestamp() {
+  let maxT = -Infinity;
+  for (const evts of Object.values(rawEvents))
+    for (const e of evts)
+      if (e.ts > maxT) maxT = e.ts;
+  return maxT;
+}
+
+function ganttClass(label) {
+  if (label === 'step') return 'gb-step';
+  if (label === 'done') return 'gb-done';
+  // F1, F2, F3, F4, B1, B2, B3, B4
+  return `gb-${label}`;
+}
+
+function renderGantt() {
+  const ranks = Object.keys(rawEvents).sort();
+  if (!ranks.length) return;
+
+  // Use ALL raw event timestamps for the global span
+  // so workers that finish backward late aren't clipped
+  const gMaxT = globalMaxTimestamp();
+
+  // Filter by step window
+  let filtered = {};
+  if (windowSteps === 0) {
+    filtered = rawEvents;
+  } else {
+    const minStep = Math.max(0, lastStep - windowSteps + 1);
+    for (const r of ranks)
+      filtered[r] = rawEvents[r].filter(e => e.step >= minStep);
+  }
+
+  // Build segments — pass gMaxT for in-progress block rendering
+  const segments = {};
+  for (const r of ranks)
+    segments[r] = buildSegments(filtered[r] || [], gMaxT);
+
+  // Global time range from completed segments only
+  let minT = Infinity, maxT = -Infinity;
+  for (const r of ranks) {
+    for (const s of segments[r]) {
+      if (s.tStart < minT) minT = s.tStart;
+      if (!s.partial && s.tEnd > maxT) maxT = s.tEnd;
+    }
+  }
+  // Extend maxT to include the latest _start timestamp + estimated block dur
+  if (maxT < gMaxT) maxT = gMaxT + 0.6;
+  if (!isFinite(minT)) return;
+  const span = maxT - minT || 1;
+
+  // Axis
+  const axisEl = document.getElementById('gantt-axis');
+  let axisHtml = '';
+  for (let i = 0; i <= 6; i++) {
+    const pct = (i / 6) * 100;
+    const ms  = Math.round((i / 6) * span * 1000);
+    axisHtml += `<div class="gantt-tick" style="left:${pct}%">${ms}ms</div>`;
+  }
+  axisEl.innerHTML = axisHtml;
+
+  // Rows
+  const html = ranks.map(r => {
+    const blocks = (segments[r] || []).map(s => {
+      const left  = ((s.tStart - minT) / span) * 100;
+      const width = Math.max(0.5, ((s.tEnd - s.tStart) / span) * 100);
+      const cls   = ganttClass(s.label);
+      const lbl   = (width > 2) ? s.label : '';
+      const opacity = s.partial ? 'opacity:0.4;' : '';
+      return `<div class="gantt-block ${cls}"
+        style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;${opacity}"
+        title="worker ${r} | step ${s.step} | ${s.label}${s.partial?' (in progress)':''}">${lbl}</div>`;
+    }).join('');
+    return `<div class="gantt-row">
+      <div class="gantt-label">worker ${r}</div>
+      <div class="gantt-track">${blocks}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('gantt-wrap').innerHTML = html;
+}
+
+// ── Loss chart ─────────────────────────────────────────────────────────────
+function renderLoss() {
+  const canvas = document.getElementById('loss-canvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  canvas.width = W * devicePixelRatio; canvas.height = H * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  ctx.clearRect(0,0,W,H);
+  if (lossHistory.length < 2) {
+    ctx.fillStyle='#7d8590'; ctx.font='12px monospace';
+    ctx.fillText('waiting for loss data...', 12, H/2); return;
+  }
+  const PAD={t:10,r:10,b:30,l:44};
+  const inner={w:W-PAD.l-PAD.r, h:H-PAD.t-PAD.b};
+  const losses=lossHistory.map(d=>d.loss), steps=lossHistory.map(d=>d.step);
+  const minL=Math.min(...losses), maxL=Math.max(...losses);
+  const minS=steps[0], maxS=steps[steps.length-1];
+  const spanL=maxL-minL||1, spanS=maxS-minS||1;
+  const px=s=>PAD.l+((s-minS)/spanS)*inner.w;
+  const py=l=>PAD.t+(1-(l-minL)/spanL)*inner.h;
+  ctx.strokeStyle='#21262d'; ctx.lineWidth=1;
+  for (let i=0;i<=4;i++) {
+    const y=PAD.t+(i/4)*inner.h;
+    ctx.beginPath(); ctx.moveTo(PAD.l,y); ctx.lineTo(W-PAD.r,y); ctx.stroke();
+    ctx.fillStyle='#7d8590'; ctx.font='10px monospace'; ctx.textAlign='right';
+    ctx.fillText((maxL-(i/4)*spanL).toFixed(3),PAD.l-4,y+3);
+  }
+  ctx.textAlign='center'; ctx.fillStyle='#7d8590'; ctx.font='10px monospace';
+  [0,0.25,0.5,0.75,1].forEach(t=>{
+    ctx.fillText(`s${Math.round(minS+t*spanS)}`,PAD.l+t*inner.w,H-6);
+  });
+  ctx.beginPath(); ctx.strokeStyle='#58a6ff'; ctx.lineWidth=2;
+  lossHistory.forEach((d,i)=>{
+    i===0?ctx.moveTo(px(d.step),py(d.loss)):ctx.lineTo(px(d.step),py(d.loss));
+  }); ctx.stroke();
+  ctx.fillStyle='#58a6ff';
+  lossHistory.forEach(d=>{ ctx.beginPath(); ctx.arc(px(d.step),py(d.loss),3,0,Math.PI*2); ctx.fill(); });
+}
+
+// ── Timing bars ────────────────────────────────────────────────────────────
+function renderTiming() {
+  const canvas = document.getElementById('timing-canvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  canvas.width = W*devicePixelRatio; canvas.height = H*devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  ctx.clearRect(0,0,W,H);
+  if (!timings.length) return;
+  const byStep={};
+  timings.forEach(t=>{if(!byStep[t.step]||t.elapsed_ms>byStep[t.step])byStep[t.step]=t.elapsed_ms;});
+  const steps=Object.keys(byStep).map(Number).sort((a,b)=>a-b);
+  const vals=steps.map(s=>byStep[s]);
+  const maxV=Math.max(...vals)||1;
+  const PAD={t:4,r:10,b:20,l:44};
+  const barW=Math.max(2,(W-PAD.l-PAD.r)/steps.length-2);
+  ctx.fillStyle='#7d8590'; ctx.font='10px monospace'; ctx.textAlign='right';
+  [0,0.5,1].forEach(t=>{
+    const y=PAD.t+(1-t)*(H-PAD.t-PAD.b);
+    ctx.fillText(`${Math.round(t*maxV)}`,PAD.l-4,y+3);
+  });
+  vals.forEach((v,i)=>{
+    const x=PAD.l+i*((W-PAD.l-PAD.r)/steps.length);
+    const bH=(v/maxV)*(H-PAD.t-PAD.b);
+    ctx.fillStyle='#1f4e8c';
+    ctx.fillRect(x,PAD.t+(H-PAD.t-PAD.b)-bH,barW,bH);
+  });
+}
+
+// ── Status ─────────────────────────────────────────────────────────────────
+function setStatus(text,color,pulsing) {
+  const dot=document.getElementById('status-dot');
+  const span=document.getElementById('status-text');
+  dot.className='dot'+(pulsing?' training':(text==='done'?' done':' connected'));
+  dot.style.background=color;
+  dot.style.boxShadow=pulsing?`0 0 6px ${color}`:'none';
+  span.textContent=text; span.style.color=color;
+}
+
+async function resetDashboard() { await fetch('/reset',{method:'POST'}); }
+window.addEventListener('resize',()=>{renderLoss();renderTiming();renderGantt();});
+</script>
+</body>
+</html>
