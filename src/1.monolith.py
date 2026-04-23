@@ -1,25 +1,3 @@
-"""
-monolith.py — The "before" picture: the whole model on one process
-==================================================================
-
-Run with:
-    python src/monolith.py
-
-This trains the SAME model on a single process with no pipeline parallelism.
-Compare its final loss to main.py — they should be similar, proving the
-distributed version is mathematically correct.
-
-Dashboard support:
-    Start the dashboard server first, then run this script.
-    python dashboard_server.py          ← terminal 1
-    python src/monolith.py              ← terminal 2
-
-    The dashboard will show it as a special "monolith" run so you can
-    compare it side-by-side with a pipeline run.
-
-Changes from the original are marked with:  # <<< ADDED
-"""
-
 import sys
 import os
 import time

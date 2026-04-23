@@ -4,13 +4,7 @@ import torch.distributed as dist
 
 
 def init_distributed():
-    """
-    Read torchrun's environment variables and set up the process group.
-
-    RANK       = which worker am I?     (0, 1, 2, 3)
-    WORLD_SIZE = how many workers?      (4)
-    LOCAL_RANK = which GPU on this box? (same as RANK on a single machine)
-    """
+    
     rank       = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
     local_rank = int(os.environ["LOCAL_RANK"])
