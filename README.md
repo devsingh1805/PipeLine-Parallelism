@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # micropp — Pipeline Parallelism from Scratch
 
 A beginner-friendly implementation of pipeline parallelism in PyTorch.
@@ -192,3 +193,6 @@ In GPipe and 1F1B, we split the batch (e.g. 32 samples) into smaller chunks (e.g
 - [GPipe paper](https://arxiv.org/abs/1811.06965) — the micro-batching idea
 - [PipeDream paper](https://arxiv.org/abs/1806.03377) — the 1F1B schedule
 - [PyTorch distributed docs](https://pytorch.org/docs/stable/distributed.html)
+=======
+# PipeLine-Parallelism
+>>>>>>> c8c32544d8335c6b0e8c88dcadd76e6598f442fe
