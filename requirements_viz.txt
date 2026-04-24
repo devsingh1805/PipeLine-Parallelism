@@ -1,4 +1,0 @@
-# Extra dependencies for the micropp dashboard
-# Install with:  pip install -r requirements_viz.txt
-
-flask>=3.0
