@@ -1,7 +1,7 @@
 import time
 import torch
-from comms import PipelineComms
-from model import ShardedMLP
+from II_comms import PipelineComms
+from IV_model import ShardedMLP
 
 SLEEP = 0.0   
 

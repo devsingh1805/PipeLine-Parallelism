@@ -1,6 +1,6 @@
 
 import torch
-from comms import PipelineComms, init_distributed
+from II_comms import PipelineComms, init_distributed
 
 def ping_pong():
     rank, world_size, device = init_distributed()

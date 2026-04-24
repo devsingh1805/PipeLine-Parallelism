@@ -3,14 +3,14 @@ import time
 import torch
 import torch.optim as optim
 
-from comms   import PipelineComms, init_distributed
-from model   import ShardedMLP
+from II_comms   import PipelineComms, init_distributed
+from IV_model   import ShardedMLP
 from tracker import Tracker
 
 # ── Pick ONE schedule ─────────────────────────────────────────────────────────
-from schedule import naive_pipeline_step   as pipeline_step
-#from schedule import gpipe_pipeline_step    as pipeline_step
-#from schedule import onef_oneb_pipeline_step as pipeline_step
+from V_schedule import naive_pipeline_step   as pipeline_step
+#from V_schedule import gpipe_pipeline_step    as pipeline_step
+#from V_schedule import onef_oneb_pipeline_step as pipeline_step
 SCHEDULE_NAME = pipeline_step.__name__.replace("_pipeline_step", "")
 
 # ── Hyperparameters ───────────────────────────────────────────────────────────
